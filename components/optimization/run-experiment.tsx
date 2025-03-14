@@ -11,36 +11,47 @@ import {
   CardHeader,
   CardTitle
 } from "@/components/ui/card"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Separator } from "@/components/ui/separator"
-import { toast } from "@/components/ui/use-toast"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Slider } from "@/components/ui/slider"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue
+} from "@/components/ui/select"
+import { Badge } from "@/components/ui/badge"
 import {
   Table,
   TableBody,
+  TableCaption,
   TableCell,
   TableHead,
   TableHeader,
   TableRow
 } from "@/components/ui/table"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import {
+  AlertCircle,
+  ArrowRight,
+  CheckCircle,
+  ChevronDown,
+  ChevronUp,
+  RefreshCw,
+  ArrowDown,
+  ArrowUp,
+  Beaker,
+  RotateCw
+} from "lucide-react"
 import {
   getSuggestionWorkflowAction,
   addMeasurementWorkflowAction
 } from "@/actions/optimization-workflow-actions"
+import { addMultipleMeasurementsWorkflowAction } from "@/actions/advanced-optimization-workflow-actions"
+import { toast } from "@/components/ui/use-toast"
 import { SelectOptimization } from "@/db/schema/optimizations-schema"
-import {
-  ArrowDown,
-  ArrowUp,
-  Beaker,
-  Check,
-  Lightbulb,
-  Loader2,
-  RefreshCw,
-  RotateCw
-} from "lucide-react"
 
 interface RunExperimentProps {
   optimization: SelectOptimization
@@ -48,36 +59,48 @@ interface RunExperimentProps {
 
 export function RunExperiment({ optimization }: RunExperimentProps) {
   const router = useRouter()
-  const [activeTab, setActiveTab] = useState("suggested")
+  const [activeTab, setActiveTab] = useState("suggestions")
   const [isLoadingSuggestions, setIsLoadingSuggestions] = useState(false)
-  const [isAddingMeasurement, setIsAddingMeasurement] = useState(false)
+  const [isSubmitting, setIsSubmitting] = useState(false)
   const [suggestions, setSuggestions] = useState<any[]>([])
+  const [batchSize, setBatchSize] = useState(1)
   const [manualParameters, setManualParameters] = useState<Record<string, any>>(
     {}
   )
   const [targetValue, setTargetValue] = useState<string>("")
+  const [measurements, setMeasurements] = useState<
+    Array<{
+      parameters: Record<string, any>
+      targetValue: string
+      isRecommended: boolean
+    }>
+  >([])
 
-  // Initialize manual parameters from the optimization config
+  // Extract parameter metadata from the optimization
+  const parameters = optimization.config?.parameters || []
+
+  // Fetch initial suggestions when the component loads
   useEffect(() => {
-    const initialParams = optimization.config.parameters.reduce(
-      (acc, param) => {
-        if (param.type === "NumericalDiscrete") {
-          acc[param.name] =
-            param.values && param.values.length > 0 ? param.values[0] : 0
-        } else if (param.type === "NumericalContinuous") {
-          acc[param.name] = param.bounds ? param.bounds[0] : 0
-        } else if (param.type === "CategoricalParameter") {
-          acc[param.name] =
-            param.values && param.values.length > 0 ? param.values[0] : ""
-        }
-        return acc
-      },
-      {} as Record<string, any>
-    )
-    setManualParameters(initialParams)
-  }, [optimization.config.parameters])
+    fetchSuggestions()
 
-  const getSuggestions = async (batchSize: number = 1) => {
+    // Initialize manual parameters with default values
+    const initialParams: Record<string, any> = {}
+    parameters.forEach(param => {
+      if (param.type === "NumericalContinuous" && param.bounds) {
+        initialParams[param.name] = (param.bounds[0] + param.bounds[1]) / 2
+      } else if (
+        (param.type === "NumericalDiscrete" ||
+          param.type === "CategoricalParameter") &&
+        param.values
+      ) {
+        initialParams[param.name] = param.values[0]
+      }
+    })
+    setManualParameters(initialParams)
+  }, [])
+
+  // Fetch suggestions from the optimizer
+  const fetchSuggestions = async () => {
     setIsLoadingSuggestions(true)
     try {
       const result = await getSuggestionWorkflowAction(
@@ -89,20 +112,20 @@ export function RunExperiment({ optimization }: RunExperimentProps) {
         setSuggestions(result.data)
         toast({
           title: "Suggestions loaded",
-          description: `Successfully loaded ${result.data.length} suggestions`
+          description: `Generated ${result.data.length} experiment suggestion${result.data.length > 1 ? "s" : ""}`
         })
       } else {
         toast({
-          title: "Error loading suggestions",
+          title: "Error",
           description: result.message,
           variant: "destructive"
         })
       }
     } catch (error) {
-      console.error("Error getting suggestions:", error)
+      console.error("Error fetching suggestions:", error)
       toast({
         title: "Error",
-        description: "Failed to get suggestions",
+        description: "Failed to fetch suggestions",
         variant: "destructive"
       })
     } finally {
@@ -110,430 +133,672 @@ export function RunExperiment({ optimization }: RunExperimentProps) {
     }
   }
 
-  const addMeasurement = async (
-    parameters: Record<string, any>,
-    value: number,
-    isRecommended: boolean = true
+  // Submit a measurement for a suggested experiment
+  const submitSuggestionMeasurement = async (
+    suggestion: any,
+    value: string
   ) => {
-    setIsAddingMeasurement(true)
+    setIsSubmitting(true)
     try {
+      const numericValue = parseFloat(value)
+
+      if (isNaN(numericValue)) {
+        toast({
+          title: "Invalid value",
+          description: "Please enter a valid number for the target value",
+          variant: "destructive"
+        })
+        return
+      }
+
       const result = await addMeasurementWorkflowAction(
         optimization.optimizerId,
-        parameters,
-        value,
-        isRecommended
+        suggestion,
+        numericValue,
+        true // Mark as recommended
       )
 
       if (result.isSuccess) {
         toast({
           title: "Measurement added",
-          description: "Successfully added measurement to the optimization"
+          description: "The measurement has been recorded successfully"
         })
 
-        // Clear target value after successful submission
-        setTargetValue("")
+        // Remove this suggestion from the list
+        setSuggestions(prev => prev.filter(s => s !== suggestion))
 
-        // If this was a suggested measurement, clear suggestions to force fetching new ones
-        if (isRecommended) {
-          setSuggestions([])
+        // Refresh suggestions if all have been used
+        if (suggestions.length <= 1) {
+          fetchSuggestions()
         }
 
-        // Refresh the page to show the updated measurements
+        // Return to the optimization details page
         router.refresh()
       } else {
         toast({
-          title: "Error adding measurement",
+          title: "Error",
           description: result.message,
           variant: "destructive"
         })
       }
     } catch (error) {
-      console.error("Error adding measurement:", error)
+      console.error("Error submitting measurement:", error)
       toast({
         title: "Error",
-        description: "Failed to add measurement",
+        description: "Failed to submit measurement",
         variant: "destructive"
       })
     } finally {
-      setIsAddingMeasurement(false)
+      setIsSubmitting(false)
     }
   }
 
-  const handleManualParameterChange = (name: string, value: any) => {
-    setManualParameters(prev => ({
-      ...prev,
-      [name]: value
-    }))
+  // Submit a manual measurement
+  const submitManualMeasurement = async () => {
+    setIsSubmitting(true)
+    try {
+      const numericValue = parseFloat(targetValue)
+
+      if (isNaN(numericValue)) {
+        toast({
+          title: "Invalid value",
+          description: "Please enter a valid number for the target value",
+          variant: "destructive"
+        })
+        return
+      }
+
+      const result = await addMeasurementWorkflowAction(
+        optimization.optimizerId,
+        manualParameters,
+        numericValue,
+        false // Mark as manually entered
+      )
+
+      if (result.isSuccess) {
+        toast({
+          title: "Measurement added",
+          description: "The manual measurement has been recorded successfully"
+        })
+
+        // Clear the target value
+        setTargetValue("")
+
+        // Return to the optimization details page
+        router.refresh()
+      } else {
+        toast({
+          title: "Error",
+          description: result.message,
+          variant: "destructive"
+        })
+      }
+    } catch (error) {
+      console.error("Error submitting measurement:", error)
+      toast({
+        title: "Error",
+        description: "Failed to submit measurement",
+        variant: "destructive"
+      })
+    } finally {
+      setIsSubmitting(false)
+    }
   }
 
-  const handleManualSubmit = () => {
-    // Validate target value
-    const parsedValue = parseFloat(targetValue)
-    if (isNaN(parsedValue)) {
+  // Add a measurement to the batch
+  const addToBatch = () => {
+    if (!targetValue || isNaN(parseFloat(targetValue))) {
       toast({
-        title: "Invalid target value",
+        title: "Invalid value",
         description: "Please enter a valid number for the target value",
         variant: "destructive"
       })
       return
     }
 
-    // Validate parameters
-    for (const param of optimization.config.parameters) {
-      const value = manualParameters[param.name]
-
-      if (value === undefined || value === "") {
-        toast({
-          title: "Missing parameter",
-          description: `Please provide a value for ${param.name}`,
-          variant: "destructive"
-        })
-        return
+    setMeasurements(prev => [
+      ...prev,
+      {
+        parameters: { ...manualParameters },
+        targetValue,
+        isRecommended: false
       }
+    ])
 
-      if (
-        param.type === "NumericalDiscrete" ||
-        param.type === "NumericalContinuous"
-      ) {
-        const numValue = typeof value === "string" ? parseFloat(value) : value
-        if (isNaN(numValue)) {
-          toast({
-            title: "Invalid parameter value",
-            description: `Please enter a valid number for ${param.name}`,
-            variant: "destructive"
-          })
-          return
-        }
+    setTargetValue("")
+  }
 
-        // Convert to number for submission
-        manualParameters[param.name] = numValue
-      }
+  // Remove a measurement from the batch
+  const removeFromBatch = (index: number) => {
+    setMeasurements(prev => prev.filter((_, i) => i !== index))
+  }
+
+  // Submit multiple measurements as a batch
+  const submitBatchMeasurements = async () => {
+    if (measurements.length === 0) {
+      toast({
+        title: "No measurements",
+        description: "Please add at least one measurement to the batch",
+        variant: "destructive"
+      })
+      return
     }
 
-    // Submit the measurement
-    addMeasurement(manualParameters, parsedValue, false)
+    setIsSubmitting(true)
+    try {
+      const formattedMeasurements = measurements.map(m => ({
+        parameters: m.parameters,
+        target_value: parseFloat(m.targetValue),
+        isRecommended: m.isRecommended
+      }))
+
+      const result = await addMultipleMeasurementsWorkflowAction(
+        optimization.optimizerId,
+        formattedMeasurements
+      )
+
+      if (result.isSuccess) {
+        toast({
+          title: "Measurements added",
+          description: `${measurements.length} measurements have been recorded successfully`
+        })
+
+        // Clear the batch
+        setMeasurements([])
+
+        // Return to the optimization details page
+        router.refresh()
+      } else {
+        toast({
+          title: "Error",
+          description: result.message,
+          variant: "destructive"
+        })
+      }
+    } catch (error) {
+      console.error("Error submitting batch measurements:", error)
+      toast({
+        title: "Error",
+        description: "Failed to submit measurements",
+        variant: "destructive"
+      })
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  // Update a manual parameter value
+  const updateParameter = (name: string, value: any) => {
+    setManualParameters(prev => ({
+      ...prev,
+      [name]: value
+    }))
+  }
+
+  // Render parameter input based on type
+  const renderParameterInput = (param: any) => {
+    const name = param.name
+    const value = manualParameters[name]
+
+    switch (param.type) {
+      case "NumericalContinuous":
+        return (
+          <div className="space-y-2" key={name}>
+            <div className="flex items-center justify-between">
+              <Label htmlFor={name}>{name}</Label>
+              <Input
+                id={`${name}-value`}
+                value={value !== undefined ? value : ""}
+                onChange={e =>
+                  updateParameter(name, parseFloat(e.target.value))
+                }
+                className="w-20 text-right"
+              />
+            </div>
+            <Slider
+              id={name}
+              min={param.bounds?.[0] ?? 0}
+              max={param.bounds?.[1] ?? 100}
+              step={(param.bounds?.[1] - param.bounds?.[0]) / 100}
+              value={[value !== undefined ? value : (param.bounds?.[0] ?? 0)]}
+              onValueChange={values => updateParameter(name, values[0])}
+            />
+            <div className="text-muted-foreground flex items-center justify-between text-xs">
+              <span>{param.bounds?.[0] ?? 0}</span>
+              <span>{param.bounds?.[1] ?? 100}</span>
+            </div>
+          </div>
+        )
+
+      case "NumericalDiscrete":
+      case "CategoricalParameter":
+        return (
+          <div className="space-y-2" key={name}>
+            <Label htmlFor={name}>{name}</Label>
+            <Select
+              value={value !== undefined ? String(value) : ""}
+              onValueChange={val => {
+                // Convert to number if it's a NumericalDiscrete parameter
+                const convertedVal =
+                  param.type === "NumericalDiscrete" && !isNaN(parseFloat(val))
+                    ? parseFloat(val)
+                    : val
+                updateParameter(name, convertedVal)
+              }}
+            >
+              <SelectTrigger id={name}>
+                <SelectValue placeholder={`Select ${name}`} />
+              </SelectTrigger>
+              <SelectContent>
+                {param.values?.map((val: any) => (
+                  <SelectItem key={val} value={String(val)}>
+                    {val}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )
+
+      default:
+        return (
+          <div className="space-y-2" key={name}>
+            <Label htmlFor={name}>{name}</Label>
+            <Input
+              id={name}
+              value={value !== undefined ? value : ""}
+              onChange={e => updateParameter(name, e.target.value)}
+              placeholder={`Enter ${name}`}
+            />
+          </div>
+        )
+    }
   }
 
   return (
     <div className="space-y-6">
-      <h2 className="text-2xl font-bold">Run Experiments</h2>
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center">
+            <Beaker className="mr-2 size-5" />
+            Run Experiments for {optimization.name}
+          </CardTitle>
+          <CardDescription>
+            This is where you can run experiments for your optimization, either
+            by using AI-suggested parameters or by manually specifying your own.
+          </CardDescription>
+        </CardHeader>
 
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-        <TabsList>
-          <TabsTrigger value="suggested">
-            <Lightbulb className="mr-2 size-4" />
-            Suggested Experiments
-          </TabsTrigger>
-          <TabsTrigger value="manual">
-            <Beaker className="mr-2 size-4" />
-            Manual Experiments
-          </TabsTrigger>
-        </TabsList>
+        <Tabs value={activeTab} onValueChange={setActiveTab}>
+          <CardContent>
+            <TabsList className="grid w-full grid-cols-3">
+              <TabsTrigger value="suggestions">AI Suggestions</TabsTrigger>
+              <TabsTrigger value="manual">Manual Entry</TabsTrigger>
+              <TabsTrigger value="batch">Batch Upload</TabsTrigger>
+            </TabsList>
+          </CardContent>
 
-        <TabsContent value="suggested" className="space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>AI-Suggested Experiments</CardTitle>
-              <CardDescription>
-                Get experiment suggestions from the optimization API
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="flex items-center justify-between">
-                <div className="space-y-1">
-                  <h3 className="text-sm font-medium">Request Parameters</h3>
-                  <p className="text-muted-foreground text-xs">
-                    Get suggestions for your next experiments
-                  </p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Button
-                    variant="outline"
-                    onClick={() => getSuggestions(1)}
-                    disabled={isLoadingSuggestions}
-                  >
-                    {isLoadingSuggestions ? (
-                      <RotateCw className="mr-2 size-4 animate-spin" />
-                    ) : (
-                      <RefreshCw className="mr-2 size-4" />
-                    )}
-                    Get 1 Suggestion
-                  </Button>
-                  <Button
-                    onClick={() => getSuggestions(3)}
-                    disabled={isLoadingSuggestions}
-                  >
-                    {isLoadingSuggestions ? (
-                      <Loader2 className="mr-2 size-4 animate-spin" />
-                    ) : (
-                      <>Get 3 Suggestions</>
-                    )}
-                  </Button>
-                </div>
-              </div>
-
-              {suggestions.length > 0 ? (
-                <div className="mt-6 space-y-6">
-                  {suggestions.map((suggestion, index) => (
-                    <Card
-                      key={index}
-                      className="border-l-4 border-l-blue-500 dark:border-l-blue-400"
-                    >
-                      <CardHeader className="pb-2">
-                        <CardTitle className="text-lg">
-                          Suggested Experiment #{index + 1}
-                        </CardTitle>
-                      </CardHeader>
-                      <CardContent>
-                        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3">
-                          {Object.entries(suggestion).map(([key, value]) => (
-                            <div key={key} className="space-y-1.5">
-                              <Label htmlFor={`param-${index}-${key}`}>
-                                {key}
-                              </Label>
-                              <Input
-                                id={`param-${index}-${key}`}
-                                value={
-                                  typeof value === "number"
-                                    ? value.toFixed(value % 1 === 0 ? 0 : 4)
-                                    : String(value)
-                                }
-                                readOnly
-                                className="bg-muted"
-                              />
-                            </div>
-                          ))}
-                          <div className="space-y-1.5">
-                            <Label
-                              htmlFor={`result-${index}`}
-                              className="flex items-center"
-                            >
-                              {optimization.targetName}
-                              {optimization.targetMode === "MAX" ? (
-                                <ArrowUp className="ml-1 size-4 text-green-500" />
-                              ) : (
-                                <ArrowDown className="ml-1 size-4 text-green-500" />
-                              )}
-                            </Label>
-                            <Input
-                              id={`result-${index}`}
-                              placeholder="Enter result"
-                              type="number"
-                              step="0.0001"
-                              value={index === 0 ? targetValue : ""}
-                              onChange={e =>
-                                index === 0 && setTargetValue(e.target.value)
-                              }
-                            />
-                          </div>
-                        </div>
-                      </CardContent>
-                      <CardFooter className="justify-end space-x-2">
-                        <Button
-                          onClick={() => {
-                            const value = parseFloat(targetValue)
-                            if (!isNaN(value)) {
-                              addMeasurement(suggestion, value, true)
-                            } else {
-                              toast({
-                                title: "Invalid value",
-                                description: "Please enter a valid number",
-                                variant: "destructive"
-                              })
-                            }
-                          }}
-                          disabled={isAddingMeasurement || !targetValue}
-                        >
-                          {isAddingMeasurement ? (
-                            <Loader2 className="mr-2 size-4 animate-spin" />
-                          ) : (
-                            <Check className="mr-2 size-4" />
-                          )}
-                          Submit Measurement
-                        </Button>
-                      </CardFooter>
-                    </Card>
-                  ))}
-                </div>
-              ) : (
-                <div className="mt-8 text-center">
-                  {isLoadingSuggestions ? (
-                    <div className="flex flex-col items-center justify-center py-8">
-                      <Loader2 className="text-muted-foreground mb-4 size-12 animate-spin" />
-                      <p className="text-muted-foreground">
-                        Generating suggestions...
-                      </p>
-                    </div>
-                  ) : (
-                    <div className="text-muted-foreground">
-                      <p className="mb-4">No suggestions loaded yet.</p>
-                      <p>
-                        Click "Get Suggestions" to receive recommendations for
-                        your next experiments.
-                      </p>
-                    </div>
-                  )}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-
-          <Alert>
-            <Lightbulb className="size-5" />
-            <AlertTitle>Using AI suggestions</AlertTitle>
-            <AlertDescription>
-              The optimizer uses Bayesian optimization to suggest the most
-              promising experiments based on your results so far. Each new
-              measurement helps the AI learn and improve its suggestions.
-            </AlertDescription>
-          </Alert>
-        </TabsContent>
-
-        <TabsContent value="manual" className="space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>Manual Experiment Entry</CardTitle>
-              <CardDescription>
-                Submit your own experiment parameters and results
-              </CardDescription>
-            </CardHeader>
+          <TabsContent value="suggestions">
             <CardContent>
-              <div className="space-y-6">
-                <div className="space-y-4">
-                  <h3 className="text-sm font-medium">Parameters</h3>
-                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3">
-                    {optimization.config.parameters.map(param => (
-                      <div key={param.name} className="space-y-1.5">
-                        <Label htmlFor={`manual-${param.name}`}>
-                          {param.name}
-                        </Label>
-                        {param.type === "CategoricalParameter" &&
-                        Array.isArray(param.values) ? (
-                          <select
-                            id={`manual-${param.name}`}
-                            value={manualParameters[param.name] || ""}
-                            onChange={e =>
-                              handleManualParameterChange(
-                                param.name,
-                                e.target.value
-                              )
-                            }
-                            className="border-input bg-background ring-offset-background placeholder:text-muted-foreground focus-visible:ring-ring flex h-10 w-full rounded-md border px-3 py-2 text-sm file:border-0 file:bg-transparent file:text-sm file:font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-                          >
-                            {param.values.map(value => (
-                              <option key={value} value={value}>
-                                {value}
-                              </option>
-                            ))}
-                          </select>
-                        ) : (
-                          <Input
-                            id={`manual-${param.name}`}
-                            type={
-                              param.type.startsWith("Numerical")
-                                ? "number"
-                                : "text"
-                            }
-                            step={
-                              param.type.startsWith("Numerical")
-                                ? "0.0001"
-                                : undefined
-                            }
-                            value={manualParameters[param.name] || ""}
-                            onChange={e => {
-                              const value = param.type.startsWith("Numerical")
-                                ? parseFloat(e.target.value)
-                                : e.target.value
-                              handleManualParameterChange(
-                                param.name,
-                                e.target.value
-                              )
-                            }}
-                            placeholder={`Enter ${param.name} value`}
-                          />
-                        )}
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-lg font-medium">
+                    AI-Suggested Experiments
+                  </h3>
 
-                        {param.type === "NumericalDiscrete" &&
-                          Array.isArray(param.values) && (
-                            <p className="text-muted-foreground text-xs">
-                              Allowed values: {param.values.join(", ")}
-                            </p>
-                          )}
-                        {param.type === "NumericalContinuous" &&
-                          param.bounds && (
-                            <p className="text-muted-foreground text-xs">
-                              Range: {param.bounds[0]} to {param.bounds[1]}
-                            </p>
-                          )}
-                      </div>
+                  <div className="flex items-center space-x-4">
+                    <div className="flex items-center space-x-2">
+                      <Label htmlFor="batch-size">Batch Size:</Label>
+                      <Select
+                        value={String(batchSize)}
+                        onValueChange={val => setBatchSize(parseInt(val, 10))}
+                      >
+                        <SelectTrigger id="batch-size" className="w-20">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {[1, 2, 3, 5, 10].map(num => (
+                            <SelectItem key={num} value={String(num)}>
+                              {num}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <Button
+                      onClick={fetchSuggestions}
+                      disabled={isLoadingSuggestions}
+                    >
+                      {isLoadingSuggestions ? (
+                        <RefreshCw className="mr-2 size-4 animate-spin" />
+                      ) : (
+                        <RefreshCw className="mr-2 size-4" />
+                      )}
+                      Refresh
+                    </Button>
+                  </div>
+                </div>
+
+                {suggestions.length > 0 ? (
+                  <div className="space-y-6">
+                    {suggestions.map((suggestion, idx) => (
+                      <Card key={idx} className="border-l-4 border-l-blue-500">
+                        <CardHeader className="pb-2">
+                          <CardTitle className="text-base">
+                            Suggestion #{idx + 1}
+                          </CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                            {parameters.map(param => (
+                              <div
+                                key={param.name}
+                                className="rounded-md border p-3"
+                              >
+                                <div className="text-sm font-medium">
+                                  {param.name}
+                                </div>
+                                <div className="mt-1 text-2xl font-bold">
+                                  {typeof suggestion[param.name] === "number"
+                                    ? suggestion[param.name].toFixed(
+                                        suggestion[param.name] % 1 === 0 ? 0 : 4
+                                      )
+                                    : suggestion[param.name]}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+
+                          <div className="mt-6 rounded-md border border-dashed p-4">
+                            <h4 className="mb-2 text-sm font-medium">
+                              Add Result for {optimization.targetName}{" "}
+                              {optimization.targetMode === "MAX" ? (
+                                <ArrowUp className="ml-1 inline-block size-4 text-green-500" />
+                              ) : (
+                                <ArrowDown className="ml-1 inline-block size-4 text-red-500" />
+                              )}
+                            </h4>
+                            <div className="flex items-end space-x-4">
+                              <div className="grow">
+                                <Label htmlFor={`target-${idx}`}>
+                                  Result Value
+                                </Label>
+                                <Input
+                                  id={`target-${idx}`}
+                                  type="number"
+                                  step="0.01"
+                                  placeholder="Enter measured value"
+                                  className="mt-1"
+                                />
+                              </div>
+                              <Button
+                                onClick={() => {
+                                  const inputEl = document.getElementById(
+                                    `target-${idx}`
+                                  ) as HTMLInputElement
+                                  if (inputEl) {
+                                    submitSuggestionMeasurement(
+                                      suggestion,
+                                      inputEl.value
+                                    )
+                                  }
+                                }}
+                                disabled={isSubmitting}
+                              >
+                                {isSubmitting ? (
+                                  <RotateCw className="mr-2 size-4 animate-spin" />
+                                ) : (
+                                  <CheckCircle className="mr-2 size-4" />
+                                )}
+                                Submit
+                              </Button>
+                            </div>
+                          </div>
+                        </CardContent>
+                      </Card>
                     ))}
                   </div>
-                </div>
+                ) : isLoadingSuggestions ? (
+                  <div className="flex items-center justify-center py-12">
+                    <RefreshCw className="mr-2 size-6 animate-spin" />
+                    <p>Loading suggestions...</p>
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-center justify-center rounded-md border border-dashed py-12">
+                    <AlertCircle className="text-muted-foreground mb-4 size-12" />
+                    <p className="text-muted-foreground mb-4">
+                      No suggestions available.
+                    </p>
+                    <Button onClick={fetchSuggestions}>
+                      <RefreshCw className="mr-2 size-4" />
+                      Generate Suggestions
+                    </Button>
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </TabsContent>
 
-                <Separator />
+          <TabsContent value="manual">
+            <CardContent>
+              <div className="space-y-6">
+                <h3 className="text-lg font-medium">Manual Parameter Entry</h3>
 
-                <div className="space-y-4">
-                  <h3 className="text-sm font-medium">
-                    Result for {optimization.targetName}
-                  </h3>
-                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                    <div className="space-y-1.5">
-                      <Label
-                        htmlFor="manual-target"
-                        className="flex items-center"
-                      >
-                        {optimization.targetName} Value
-                        {optimization.targetMode === "MAX" ? (
-                          <ArrowUp className="ml-1 size-4 text-green-500" />
-                        ) : (
-                          <ArrowDown className="ml-1 size-4 text-green-500" />
+                <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+                  <div className="space-y-4">
+                    <h4 className="text-sm font-medium">Parameters</h4>
+                    {parameters.map(param => renderParameterInput(param))}
+                  </div>
+
+                  <div className="space-y-4">
+                    <h4 className="text-sm font-medium">Preview</h4>
+                    <div className="rounded-md border p-4">
+                      <div className="space-y-2">
+                        {Object.entries(manualParameters).map(
+                          ([name, value]) => (
+                            <div key={name} className="flex justify-between">
+                              <span className="font-medium">{name}:</span>
+                              <span>
+                                {typeof value === "number"
+                                  ? value.toFixed(value % 1 === 0 ? 0 : 4)
+                                  : String(value)}
+                              </span>
+                            </div>
+                          )
                         )}
-                      </Label>
-                      <Input
-                        id="manual-target"
-                        type="number"
-                        step="0.0001"
-                        value={targetValue}
-                        onChange={e => setTargetValue(e.target.value)}
-                        placeholder={`Enter ${optimization.targetName} value`}
-                      />
-                      <p className="text-muted-foreground text-xs">
-                        The measured value to{" "}
-                        {optimization.targetMode === "MAX"
-                          ? "maximize"
-                          : "minimize"}
-                      </p>
+                      </div>
+                    </div>
+
+                    <div className="rounded-md border border-dashed p-4">
+                      <h4 className="mb-2 text-sm font-medium">
+                        Add Result for {optimization.targetName}{" "}
+                        {optimization.targetMode === "MAX" ? (
+                          <ArrowUp className="ml-1 inline-block size-4 text-green-500" />
+                        ) : (
+                          <ArrowDown className="ml-1 inline-block size-4 text-red-500" />
+                        )}
+                      </h4>
+                      <div className="flex items-end space-x-4">
+                        <div className="grow">
+                          <Label htmlFor="manual-target">Result Value</Label>
+                          <Input
+                            id="manual-target"
+                            type="number"
+                            step="0.01"
+                            placeholder="Enter measured value"
+                            value={targetValue}
+                            onChange={e => setTargetValue(e.target.value)}
+                            className="mt-1"
+                          />
+                        </div>
+                        <Button
+                          onClick={submitManualMeasurement}
+                          disabled={isSubmitting || !targetValue}
+                        >
+                          {isSubmitting ? (
+                            <RotateCw className="mr-2 size-4 animate-spin" />
+                          ) : (
+                            <CheckCircle className="mr-2 size-4" />
+                          )}
+                          Submit
+                        </Button>
+                      </div>
                     </div>
                   </div>
                 </div>
               </div>
             </CardContent>
-            <CardFooter className="justify-end">
-              <Button
-                onClick={handleManualSubmit}
-                disabled={isAddingMeasurement || !targetValue}
-              >
-                {isAddingMeasurement ? (
-                  <Loader2 className="mr-2 size-4 animate-spin" />
-                ) : (
-                  <Check className="mr-2 size-4" />
-                )}
-                Submit Manual Measurement
-              </Button>
-            </CardFooter>
-          </Card>
+          </TabsContent>
 
-          <Alert>
-            <Beaker className="size-5" />
-            <AlertTitle>Manual measurements</AlertTitle>
-            <AlertDescription>
-              Use this form to enter results from experiments you've conducted
-              outside the optimization system. These measurements will be
-              incorporated into the model to improve future suggestions.
-            </AlertDescription>
-          </Alert>
-        </TabsContent>
-      </Tabs>
+          <TabsContent value="batch">
+            <CardContent>
+              <div className="space-y-6">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-lg font-medium">
+                    Batch Measurement Entry
+                  </h3>
+                </div>
+
+                <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+                  <div className="space-y-4">
+                    <h4 className="text-sm font-medium">Parameters</h4>
+                    {parameters.map(param => renderParameterInput(param))}
+
+                    <div className="rounded-md border border-dashed p-4">
+                      <h4 className="mb-2 text-sm font-medium">
+                        {optimization.targetName} Value{" "}
+                        {optimization.targetMode === "MAX" ? (
+                          <ArrowUp className="ml-1 inline-block size-4 text-green-500" />
+                        ) : (
+                          <ArrowDown className="ml-1 inline-block size-4 text-red-500" />
+                        )}
+                      </h4>
+                      <div className="flex items-end space-x-4">
+                        <div className="grow">
+                          <Label htmlFor="batch-target">Result Value</Label>
+                          <Input
+                            id="batch-target"
+                            type="number"
+                            step="0.01"
+                            placeholder="Enter measured value"
+                            value={targetValue}
+                            onChange={e => setTargetValue(e.target.value)}
+                            className="mt-1"
+                          />
+                        </div>
+                        <Button onClick={addToBatch} disabled={!targetValue}>
+                          Add to Batch
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-4">
+                    <h4 className="text-sm font-medium">Batch Measurements</h4>
+                    {measurements.length > 0 ? (
+                      <div className="max-h-[400px] overflow-auto rounded-md border">
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead className="w-[50px]">#</TableHead>
+                              <TableHead>Parameters</TableHead>
+                              <TableHead className="text-right">
+                                Value
+                              </TableHead>
+                              <TableHead className="w-[60px]"></TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {measurements.map((measurement, idx) => (
+                              <TableRow key={idx}>
+                                <TableCell>{idx + 1}</TableCell>
+                                <TableCell>
+                                  <div className="max-h-[100px] overflow-auto text-xs">
+                                    {Object.entries(measurement.parameters).map(
+                                      ([name, value]) => (
+                                        <div key={name}>
+                                          <span className="font-medium">
+                                            {name}:
+                                          </span>{" "}
+                                          {typeof value === "number"
+                                            ? value.toFixed(
+                                                value % 1 === 0 ? 0 : 2
+                                              )
+                                            : String(value)}
+                                        </div>
+                                      )
+                                    )}
+                                  </div>
+                                </TableCell>
+                                <TableCell className="text-right">
+                                  {measurement.targetValue}
+                                </TableCell>
+                                <TableCell>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    onClick={() => removeFromBatch(idx)}
+                                  >
+                                    <span className="sr-only">Remove</span>
+                                    <svg
+                                      xmlns="http://www.w3.org/2000/svg"
+                                      className="size-4"
+                                      fill="none"
+                                      viewBox="0 0 24 24"
+                                      stroke="currentColor"
+                                    >
+                                      <path
+                                        strokeLinecap="round"
+                                        strokeLinejoin="round"
+                                        strokeWidth={2}
+                                        d="M6 18L18 6M6 6l12 12"
+                                      />
+                                    </svg>
+                                  </Button>
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </div>
+                    ) : (
+                      <div className="text-muted-foreground flex items-center justify-center rounded-md border border-dashed p-6">
+                        <p>No measurements added to batch yet.</p>
+                      </div>
+                    )}
+
+                    {measurements.length > 0 && (
+                      <Button
+                        className="w-full"
+                        onClick={submitBatchMeasurements}
+                        disabled={isSubmitting}
+                      >
+                        {isSubmitting ? (
+                          <RotateCw className="mr-2 size-4 animate-spin" />
+                        ) : (
+                          <CheckCircle className="mr-2 size-4" />
+                        )}
+                        Submit {measurements.length} Measurement
+                        {measurements.length !== 1 ? "s" : ""}
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </TabsContent>
+        </Tabs>
+
+        <CardFooter className="bg-muted/40 border-t p-6">
+          <p className="text-muted-foreground text-sm">
+            {optimization.targetMode === "MAX" ? "Maximizing" : "Minimizing"}{" "}
+            <span className="font-medium">{optimization.targetName}</span>.
+            Remember to enter accurate measurements to help the optimizer learn
+            and improve its suggestions.
+          </p>
+        </CardFooter>
+      </Card>
     </div>
   )
 }
