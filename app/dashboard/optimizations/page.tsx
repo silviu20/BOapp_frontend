@@ -1,4 +1,5 @@
 // app/dashboard/optimizations/page.tsx
+
 "use server"
 
 import { Button } from "@/components/ui/button"
@@ -30,7 +31,7 @@ export default async function OptimizationsPage() {
   let apiAvailable = false
   let usingGPU = false
   let apiStatus = null
-
+  
   try {
     apiStatus = await checkAPIHealth()
     apiAvailable = apiStatus.isSuccess
@@ -86,9 +87,8 @@ export default async function OptimizationsPage() {
               <p className="text-sm font-medium">GPU Information</p>
               <p className="text-muted-foreground text-xs">
                 {apiStatus.data.gpu_info.name} - Memory:{" "}
-                {apiStatus.data.gpu_info.memory_allocated_mb?.toFixed(2) ||
-                  "N/A"}{" "}
-                MB allocated
+                {apiStatus.data.gpu_info.memory_allocated_mb?.toFixed(2) || "N/A"} MB
+                allocated
               </p>
             </div>
           )}
