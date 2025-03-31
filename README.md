@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 
 ### Run the app
 
@@ -14,3 +15,6 @@ npm run dev
 ```
 
 3.  View the app on http://localhost:3000
+=======
+# BOapp_frontend
+>>>>>>> 030f057ae3a26ed0679053217814035ea7bfa897
